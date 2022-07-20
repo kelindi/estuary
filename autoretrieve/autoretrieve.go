@@ -59,6 +59,7 @@ type AutoretrieveInitResponse struct {
 // EstuaryMhIterator contains objects to query the database
 // incrementally, to avoid having all CIDs in memory at once
 type EstuaryMhIterator struct {
+	// we need contentOffset because one content might have more than one CID
 	contentOffset int // offset of the content in the Contents slice
 	cidOffset     int // offset of the cid related to the current content
 	Contents      []util.Content
@@ -89,6 +90,9 @@ func (m *EstuaryMhIterator) Next() (multihash.Multihash, error) {
 		m.ContentCids, err = findContentCids(m.Db, nextContent)
 		if err != nil {
 			return nil, err
+		}
+		if len(m.ContentCids) == 0 {
+			return nil, fmt.Errorf("content has no related CIDs")
 		}
 	}
 
@@ -175,17 +179,23 @@ func NewAutoretrieveEngine(ctx context.Context, cfg *config.Estuary, db *gorm.DB
 			return nil, err
 		}
 
+		log.Debugf("found %d new contents", len(newContents))
 		if len(newContents) == 0 {
 			return nil, fmt.Errorf("no new contents")
 		}
 
 		var newContentCids []cid.Cid
-		newContentCids, err = findContentCids(db, newContents[0])
-		if err != nil {
-			return nil, err
+		for i := 0; i < len(newContents); i++ {
+			var cids []cid.Cid
+			cids, err = findContentCids(db, newContents[i])
+			if err != nil {
+				return nil, err
+			}
+			newContentCids = append(newContentCids, cids...)
 		}
+		log.Debugf("found %d new cids", len(newContentCids))
 
-		log.Debugf("found %d new contents, announcing", len(newContents))
+		log.Infof("announcing %d contents with a total of %d CIDs", len(newContents), len(newContentCids))
 
 		return &EstuaryMhIterator{
 			Contents:    newContents,
